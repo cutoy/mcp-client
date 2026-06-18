@@ -1,0 +1,8 @@
+com/demo/mcphost/service/OpenAiService.class
+com/demo/mcphost/service/McpClientService.class
+com/demo/mcphost/service/OpenAiService$ToolCall.class
+com/demo/mcphost/controller/ChatController.class
+com/demo/mcphost/McpHostApplication.class
+com/demo/mcphost/service/OpenAiService$OpenAiChatResponse.class
+com/demo/mcphost/model/ChatRequest.class
+com/demo/mcphost/model/ChatResponse.class

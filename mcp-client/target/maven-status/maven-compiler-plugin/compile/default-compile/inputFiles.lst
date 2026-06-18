@@ -1,0 +1,5 @@
+/workspace/mcp-client/src/main/java/com/demo/mcpclient/McpClientApplication.java
+/workspace/mcp-client/src/main/java/com/demo/mcpclient/config/ClientConfig.java
+/workspace/mcp-client/src/main/java/com/demo/mcpclient/config/ServerConfig.java
+/workspace/mcp-client/src/main/java/com/demo/mcpclient/config/ServerRegistry.java
+/workspace/mcp-client/src/main/java/com/demo/mcpclient/controller/McpClientController.java
