@@ -19,6 +19,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.io.IOException;
 
 @RestController
@@ -29,9 +32,13 @@ public class ChatController {
     private final OpenAiService openAiService;
     private final McpClientService mcpClientService;
     private final ObjectMapper objectMapper;
+    private final ConcurrentHashMap<String, SessionEntry> sessions = new ConcurrentHashMap<>();
 
     @Value("${mcp.max.rounds:10}")
     private int maxRounds;
+
+    @Value("${mcp.session.ttl:30}")
+    private int sessionTtlMinutes;
 
     @Value("${mcp.system.prompt:You are a helpful assistant with access to a MySQL database. Use the available tools to query the database when needed.}")
     private String systemPrompt;
@@ -40,20 +47,19 @@ public class ChatController {
         this.openAiService = openAiService;
         this.mcpClientService = mcpClientService;
         this.objectMapper = objectMapper;
+
+        Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(
+                this::cleanExpiredSessions, 5, 5, TimeUnit.MINUTES);
     }
 
     @PostMapping("/chat")
     public ChatResponse chat(@RequestBody ChatRequest request) {
-        log.info("POST /chat message: {}", request.getMessage());
+        log.info("POST /chat session={} message: {}", request.getSessionId(), request.getMessage());
 
         List<Map<String, Object>> tools = mcpClientService.listTools();
         log.info("Available tools: {}", tools.stream().map(t -> t.get("name")).toList());
 
-        List<Map<String, Object>> messages = new ArrayList<>();
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            messages.add(Map.of("role", "system", "content", systemPrompt));
-        }
-        messages.add(Map.of("role", "user", "content", request.getMessage()));
+        List<Map<String, Object>> messages = loadSession(request.getSessionId());
 
         for (int round = 0; round < maxRounds; round++) {
             log.info("Round {}: sending to OpenAI with {} messages", round + 1, messages.size());
@@ -61,6 +67,9 @@ public class ChatController {
             OpenAiService.OpenAiChatResponse response = openAiService.chat(messages, tools);
 
             if (!response.hasToolCall()) {
+                messages.add(response.getRawMessage());
+                saveSession(request.getSessionId(), messages);
+
                 String content = response.getContent();
                 if (content == null || content.isEmpty()) {
                     content = "No response from model";
@@ -90,6 +99,7 @@ public class ChatController {
         }
 
         log.warn("Max rounds ({}) exceeded. Returning partial result.", maxRounds);
+        saveSession(request.getSessionId(), messages);
         return new ChatResponse("Reached maximum " + maxRounds + " rounds of tool calls. "
                 + "The query may be too complex or the model is stuck in a loop. "
                 + "Last tool result: " + extractToolContentFromLastRound(messages));
@@ -145,12 +155,10 @@ public class ChatController {
         new Thread(() -> {
             try {
                 List<Map<String, Object>> tools = mcpClientService.listTools();
-                log.info("Stream: available tools: {}", tools.stream().map(t -> t.get("name")).toList());
+                log.info("Stream session={}: available tools: {}", request.getSessionId(),
+                        tools.stream().map(t -> t.get("name")).toList());
 
-                List<Map<String, Object>> messages = new ArrayList<>();
-                if (systemPrompt != null && !systemPrompt.isBlank()) {
-                    messages.add(Map.of("role", "system", "content", systemPrompt));
-                }
+                List<Map<String, Object>> messages = loadSession(request.getSessionId());
                 messages.add(Map.of("role", "user", "content", request.getMessage()));
 
                 int round = 0;
@@ -158,6 +166,8 @@ public class ChatController {
                     OpenAiService.OpenAiChatResponse response = openAiService.chat(messages, tools);
 
                     if (!response.hasToolCall()) {
+                        messages.add(response.getRawMessage());
+                        saveSession(request.getSessionId(), messages);
                         emitter.send(SseEmitter.event().name("info").data("Generating response..."));
 
                         openAiService.chatStream(messages, tools,
@@ -194,6 +204,7 @@ public class ChatController {
                     messages.add(toolMessage);
                 }
 
+                saveSession(request.getSessionId(), messages);
                 emitter.send(SseEmitter.event().name("error")
                         .data("Reached maximum " + maxRounds + " rounds"));
                 emitter.complete();
@@ -205,5 +216,58 @@ public class ChatController {
         }).start();
 
         return emitter;
+    }
+
+    private List<Map<String, Object>> newSessionMessages() {
+        List<Map<String, Object>> messages = new ArrayList<>();
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+        }
+        return messages;
+    }
+
+    private List<Map<String, Object>> loadSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return newSessionMessages();
+        }
+        SessionEntry entry = sessions.get(sessionId);
+        if (entry == null) {
+            return newSessionMessages();
+        }
+        entry.touch();
+        log.info("Session {}: loaded {} previous messages", sessionId, entry.messages.size());
+        return new ArrayList<>(entry.messages);
+    }
+
+    private void saveSession(String sessionId, List<Map<String, Object>> messages) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        sessions.put(sessionId, new SessionEntry(messages));
+        log.info("Session {}: saved {} messages", sessionId, messages.size());
+    }
+
+    private void cleanExpiredSessions() {
+        long now = System.currentTimeMillis();
+        long ttl = (long) sessionTtlMinutes * 60 * 1000;
+        sessions.entrySet().removeIf(entry -> {
+            boolean expired = now - entry.getValue().lastAccess > ttl;
+            if (expired) log.info("Session {} expired", entry.getKey());
+            return expired;
+        });
+    }
+
+    private static class SessionEntry {
+        final List<Map<String, Object>> messages;
+        volatile long lastAccess;
+
+        SessionEntry(List<Map<String, Object>> messages) {
+            this.messages = List.copyOf(messages);
+            this.lastAccess = System.currentTimeMillis();
+        }
+
+        void touch() {
+            lastAccess = System.currentTimeMillis();
+        }
     }
 }

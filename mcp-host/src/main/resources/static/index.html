@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Demo - Chat</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+        header { background: #16213e; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; }
+        header h1 { font-size: 16px; color: #e94560; }
+        header .controls { display: flex; gap: 10px; align-items: center; }
+        header input { background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 12px; width: 180px; }
+        header button { background: #0f3460; color: #e0e0e0; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        header button:hover { background: #1a4a8a; }
+        header button.mode { background: transparent; border: 1px solid #0f3460; }
+        header button.mode.active { background: #e94560; border-color: #e94560; }
+        #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .msg { max-width: 80%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+        .msg.user { align-self: flex-end; background: #0f3460; }
+        .msg.assistant { align-self: flex-start; background: #16213e; border: 1px solid #0f3460; }
+        .msg.system { align-self: center; background: transparent; color: #666; font-size: 12px; padding: 4px; max-width: 100%; }
+        .msg.tool { align-self: center; background: #2d2d44; color: #aaa; font-size: 11px; border-radius: 4px; padding: 4px 10px; max-width: 90%; }
+        .msg code { background: #0a0a1a; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+        .msg pre { background: #0a0a1a; padding: 10px; border-radius: 6px; overflow-x: auto; margin-top: 6px; font-size: 12px; }
+        footer { background: #16213e; padding: 12px 20px; border-top: 1px solid #0f3460; display: flex; gap: 10px; }
+        footer textarea { flex: 1; background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0; padding: 10px; border-radius: 4px; font-size: 14px; resize: none; height: 44px; font-family: inherit; }
+        footer textarea:focus { outline: none; border-color: #e94560; }
+        footer button { background: #e94560; color: #fff; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        footer button:disabled { background: #555; cursor: not-allowed; }
+        .typing { color: #666; font-style: italic; padding: 10px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>MCP Demo</h1>
+        <div class="controls">
+            <input id="sessionId" placeholder="Session ID (optional)" value="">
+            <button id="newSession">New</button>
+            <button id="modeBtn" class="mode">Stream</button>
+        </div>
+    </header>
+    <div id="messages">
+        <div class="msg system">MCP Demo ready. Type a question about your database.</div>
+    </div>
+    <footer>
+        <textarea id="input" placeholder="Ask a question..." rows="1"></textarea>
+        <button id="send">Send</button>
+    </footer>
+
+    <script>
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('input');
+        const sendBtn = document.getElementById('send');
+        const sessionIdEl = document.getElementById('sessionId');
+        const modeBtn = document.getElementById('modeBtn');
+
+        let streamMode = false;
+        let currentAssistantMsg = null;
+
+        modeBtn.addEventListener('click', () => {
+            streamMode = !streamMode;
+            modeBtn.textContent = streamMode ? 'Stream' : 'Normal';
+            modeBtn.classList.toggle('active', streamMode);
+        });
+        modeBtn.classList.add('active');
+        streamMode = true;
+
+        document.getElementById('newSession').addEventListener('click', () => {
+            sessionIdEl.value = crypto.randomUUID().substring(0, 8);
+        });
+
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+
+        sendBtn.addEventListener('click', send);
+
+        async function send() {
+            const message = inputEl.value.trim();
+            if (!message) return;
+            inputEl.value = '';
+            sendBtn.disabled = true;
+
+            addMessage('user', message);
+
+            const sessionId = sessionIdEl.value.trim() || undefined;
+
+            if (streamMode) {
+                await sendStream(message, sessionId);
+            } else {
+                await sendNormal(message, sessionId);
+            }
+
+            sendBtn.disabled = false;
+            inputEl.focus();
+        }
+
+        async function sendNormal(message, sessionId) {
+            try {
+                const body = { message };
+                if (sessionId) body.sessionId = sessionId;
+
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                addMessage('assistant', data.content || data.error || JSON.stringify(data));
+            } catch (err) {
+                addMessage('system', 'Error: ' + err.message);
+            }
+        }
+
+        async function sendStream(message, sessionId) {
+            try {
+                const body = { message };
+                if (sessionId) body.sessionId = sessionId;
+
+                const res = await fetch('/chat/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let currentEvent = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (line.startsWith('event:')) {
+                            currentEvent = line.substring(6).trim();
+                        } else if (line.startsWith('data:')) {
+                            const data = line.substring(5).trim();
+                            handleStreamEvent(currentEvent, data);
+                            currentEvent = '';
+                        }
+                    }
+                }
+            } catch (err) {
+                addMessage('system', 'Stream error: ' + err.message);
+            }
+        }
+
+        function handleStreamEvent(event, data) {
+            if (event === 'info' || event === 'tool_call') {
+                addMessage('tool', data);
+            } else if (event === 'chunk') {
+                if (!currentAssistantMsg) {
+                    currentAssistantMsg = document.createElement('div');
+                    currentAssistantMsg.className = 'msg assistant';
+                    messagesEl.appendChild(currentAssistantMsg);
+                }
+                currentAssistantMsg.textContent += data;
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+            } else if (event === 'done') {
+                currentAssistantMsg = null;
+            } else if (event === 'error') {
+                if (currentAssistantMsg) currentAssistantMsg = null;
+                addMessage('system', 'Error: ' + data);
+            }
+        }
+                }
+            } catch (err) {
+                addMessage('system', 'Stream error: ' + err.message);
+            }
+        }
+
+        function handleStreamEvent(line, buffer) {
+            if (line.includes('event:')) return;
+            if (!line.startsWith('data:')) return;
+            const dataStr = line.substring(5).trim();
+            if (!dataStr) return;
+
+            try {
+                const eventType = buffer.includes('event:') ? buffer.match(/event:(\w+)/)?.[1] : null;
+                // Simple parsing: the SSE event type is in the previous line
+                // We'll just check the content
+            } catch (e) {}
+
+            addMessage('assistant-stream', dataStr);
+        }
+
+        function addMessage(role, content) {
+            if (role === 'assistant-stream') {
+                if (!currentAssistantMsg) {
+                    currentAssistantMsg = document.createElement('div');
+                    currentAssistantMsg.className = 'msg assistant';
+                    messagesEl.appendChild(currentAssistantMsg);
+                }
+                currentAssistantMsg.textContent += content;
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+                return;
+            }
+
+            currentAssistantMsg = null;
+
+            const div = document.createElement('div');
+            div.className = 'msg ' + role;
+
+            if (role === 'assistant' && looksLikeCode(content)) {
+                try {
+                    const parsed = JSON.parse(content);
+                    div.textContent = JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    div.textContent = content;
+                }
+            } else {
+                div.textContent = content;
+            }
+
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function looksLikeCode(text) {
+            return text.startsWith('{') || text.startsWith('[') || text.includes('```');
+        }
+    </script>
+</body>
+</html>
