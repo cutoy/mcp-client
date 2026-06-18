@@ -3,6 +3,7 @@ package com.demo.mcpclient.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
@@ -175,6 +176,31 @@ public class ServerRegistry {
 
     public boolean hasConnection(String serverName) {
         return connections.containsKey(serverName);
+    }
+
+    @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
+    public void healthCheck() {
+        for (Map.Entry<String, ServerConnection> entry : connections.entrySet()) {
+            String serverName = entry.getKey();
+            ServerConnection conn = entry.getValue();
+            try {
+                Map<String, Object> ping = Map.of(
+                        "jsonrpc", "2.0",
+                        "method", "ping",
+                        "id", System.currentTimeMillis()
+                );
+                restTemplate.postForObject(conn.getUrl() + "/mcp", ping, Map.class);
+                log.debug("Health check OK: {}", serverName);
+            } catch (Exception e) {
+                log.warn("Health check failed for server: {} - {}", serverName, e.getMessage());
+                connections.remove(serverName);
+                log.info("Attempting to reconnect to server: {}", serverName);
+                ServerConfig.ServerInfo serverInfo = config.getServerInfo(serverName);
+                if (serverInfo != null) {
+                    connectWithRetry(serverInfo, 1);
+                }
+            }
+        }
     }
 
     private static class ServerConnection {
