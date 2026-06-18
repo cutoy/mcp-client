@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
@@ -69,23 +70,30 @@ public class QueryDatabaseTool {
                 return new ToolCallResult("Error: dangerous SQL keyword detected: " + blocked, true);
             }
 
+            @SuppressWarnings("unchecked")
+            List<Object> params = (List<Object>) arguments.get("params");
+
             List<Map<String, Object>> results = new ArrayList<>();
-            try (Connection conn = dataSource.getConnection();
-                 Statement stmt = conn.createStatement()) {
+            try (Connection conn = dataSource.getConnection()) {
 
-                stmt.setQueryTimeout(queryTimeout);
-                stmt.setMaxRows(maxRows);
-
-                try (ResultSet rs = stmt.executeQuery(sql)) {
-                    ResultSetMetaData rsmd = rs.getMetaData();
-                    int columnCount = rsmd.getColumnCount();
-
-                    while (rs.next()) {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        for (int i = 1; i <= columnCount; i++) {
-                            row.put(rsmd.getColumnLabel(i), rs.getObject(i));
+                if (params != null && !params.isEmpty()) {
+                    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                        pstmt.setQueryTimeout(queryTimeout);
+                        pstmt.setMaxRows(maxRows);
+                        for (int i = 0; i < params.size(); i++) {
+                            pstmt.setObject(i + 1, params.get(i));
                         }
-                        results.add(row);
+                        try (ResultSet rs = pstmt.executeQuery()) {
+                            results = readResultSet(rs);
+                        }
+                    }
+                } else {
+                    try (Statement stmt = conn.createStatement()) {
+                        stmt.setQueryTimeout(queryTimeout);
+                        stmt.setMaxRows(maxRows);
+                        try (ResultSet rs = stmt.executeQuery(sql)) {
+                            results = readResultSet(rs);
+                        }
                     }
                 }
             }
@@ -120,5 +128,19 @@ public class QueryDatabaseTool {
             return m.group(1);
         }
         return null;
+    }
+
+    private List<Map<String, Object>> readResultSet(ResultSet rs) throws Exception {
+        List<Map<String, Object>> results = new ArrayList<>();
+        ResultSetMetaData rsmd = rs.getMetaData();
+        int columnCount = rsmd.getColumnCount();
+        while (rs.next()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (int i = 1; i <= columnCount; i++) {
+                row.put(rsmd.getColumnLabel(i), rs.getObject(i));
+            }
+            results.add(row);
+        }
+        return results;
     }
 }
