@@ -12,6 +12,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Component
 public class QueryDatabaseTool {
@@ -63,6 +64,11 @@ public class QueryDatabaseTool {
                 return new ToolCallResult("Error: only SELECT statements are allowed", true);
             }
 
+            String blocked = checkDangerousKeywords(upperSql);
+            if (blocked != null) {
+                return new ToolCallResult("Error: dangerous SQL keyword detected: " + blocked, true);
+            }
+
             List<Map<String, Object>> results = new ArrayList<>();
             try (Connection conn = dataSource.getConnection();
                  Statement stmt = conn.createStatement()) {
@@ -91,5 +97,28 @@ public class QueryDatabaseTool {
             log.error("query_database execution failed", e);
             return new ToolCallResult("Error: " + e.getMessage(), true);
         }
+    }
+
+    private static final Pattern DANGEROUS_KEYWORDS = Pattern.compile(
+            "\\b(INSERT|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|EXEC(UTE)?|CALL|REPLACE|RENAME|LOCK|UNLOCK|FLUSH|KILL|SHUTDOWN)\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern DANGEROUS_FUNCTIONS = Pattern.compile(
+            "\\b(LOAD_FILE|INTO\\s+(OUTFILE|DUMPFILE)|BENCHMARK|SLEEP)\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    private String checkDangerousKeywords(String upperSql) {
+        if (upperSql.contains(";")) {
+            return "multi-statement (;)";
+        }
+        java.util.regex.Matcher m = DANGEROUS_KEYWORDS.matcher(upperSql);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = DANGEROUS_FUNCTIONS.matcher(upperSql);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
     }
 }

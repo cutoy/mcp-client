@@ -9,14 +9,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.io.IOException;
 
 @RestController
 public class ChatController {
@@ -29,6 +32,9 @@ public class ChatController {
 
     @Value("${mcp.max.rounds:10}")
     private int maxRounds;
+
+    @Value("${mcp.system.prompt:You are a helpful assistant with access to a MySQL database. Use the available tools to query the database when needed.}")
+    private String systemPrompt;
 
     public ChatController(OpenAiService openAiService, McpClientService mcpClientService, ObjectMapper objectMapper) {
         this.openAiService = openAiService;
@@ -44,6 +50,9 @@ public class ChatController {
         log.info("Available tools: {}", tools.stream().map(t -> t.get("name")).toList());
 
         List<Map<String, Object>> messages = new ArrayList<>();
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+        }
         messages.add(Map.of("role", "user", "content", request.getMessage()));
 
         for (int round = 0; round < maxRounds; round++) {
@@ -80,7 +89,10 @@ public class ChatController {
             messages.add(toolMessage);
         }
 
-        throw new RuntimeException("Exceeded max rounds: " + maxRounds + ". Tool call loop did not converge.");
+        log.warn("Max rounds ({}) exceeded. Returning partial result.", maxRounds);
+        return new ChatResponse("Reached maximum " + maxRounds + " rounds of tool calls. "
+                + "The query may be too complex or the model is stuck in a loop. "
+                + "Last tool result: " + extractToolContentFromLastRound(messages));
     }
 
     private String findServerName(List<Map<String, Object>> tools, String toolName) {
@@ -113,5 +125,85 @@ public class ChatController {
         } catch (Exception e) {
             return toolResult.toString();
         }
+    }
+
+    private String extractToolContentFromLastRound(List<Map<String, Object>> messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Map<String, Object> msg = messages.get(i);
+            if ("tool".equals(msg.get("role"))) {
+                Object content = msg.get("content");
+                return content != null ? content.toString() : "no content";
+            }
+        }
+        return "no tool results available";
+    }
+
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(@RequestBody ChatRequest request) {
+        SseEmitter emitter = new SseEmitter(300000L);
+
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> tools = mcpClientService.listTools();
+                log.info("Stream: available tools: {}", tools.stream().map(t -> t.get("name")).toList());
+
+                List<Map<String, Object>> messages = new ArrayList<>();
+                if (systemPrompt != null && !systemPrompt.isBlank()) {
+                    messages.add(Map.of("role", "system", "content", systemPrompt));
+                }
+                messages.add(Map.of("role", "user", "content", request.getMessage()));
+
+                int round = 0;
+                for (; round < maxRounds; round++) {
+                    OpenAiService.OpenAiChatResponse response = openAiService.chat(messages, tools);
+
+                    if (!response.hasToolCall()) {
+                        emitter.send(SseEmitter.event().name("info").data("Generating response..."));
+
+                        openAiService.chatStream(messages, tools,
+                                chunk -> {
+                                    try { emitter.send(SseEmitter.event().name("chunk").data(chunk)); }
+                                    catch (IOException e) { log.error("SSE send failed", e); }
+                                },
+                                result -> {
+                                    try { emitter.send(SseEmitter.event().name("done").data("")); emitter.complete(); }
+                                    catch (IOException e) { log.error("SSE complete failed", e); }
+                                },
+                                error -> {
+                                    try { emitter.send(SseEmitter.event().name("error").data(error)); emitter.complete(); }
+                                    catch (IOException e) { log.error("SSE error failed", e); }
+                                }
+                        );
+                        return;
+                    }
+
+                    OpenAiService.ToolCall toolCall = response.getToolCall();
+                    emitter.send(SseEmitter.event().name("tool_call")
+                            .data("Calling " + toolCall.getFunctionName() + "..."));
+
+                    String toolName = toolCall.getFunctionName();
+                    String serverName = findServerName(tools, toolName);
+                    Map<String, Object> toolResult = mcpClientService.callTool(serverName, toolName, toolCall.getArguments());
+
+                    Map<String, Object> assistantMessage = new HashMap<>(response.getRawMessage());
+                    Map<String, Object> toolMessage = new HashMap<>();
+                    toolMessage.put("role", "tool");
+                    toolMessage.put("tool_call_id", toolCall.getId());
+                    toolMessage.put("content", extractToolContent(toolResult));
+                    messages.add(assistantMessage);
+                    messages.add(toolMessage);
+                }
+
+                emitter.send(SseEmitter.event().name("error")
+                        .data("Reached maximum " + maxRounds + " rounds"));
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("Stream error", e);
+                try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); emitter.complete(); }
+                catch (IOException ex) { log.error("SSE error send failed", ex); }
+            }
+        }).start();
+
+        return emitter;
     }
 }

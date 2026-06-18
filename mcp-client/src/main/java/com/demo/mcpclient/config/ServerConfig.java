@@ -20,9 +20,17 @@ public class ServerConfig {
         this.servers = servers;
     }
 
+    public ServerInfo getServerInfo(String name) {
+        return servers.stream()
+                .filter(s -> s.getName().equals(name))
+                .findFirst()
+                .orElse(null);
+    }
+
     public static class ServerInfo {
         private String name;
         private String url;
+        private String toolNamePrefix;
 
         public String getName() {
             return name;
@@ -38,6 +46,14 @@ public class ServerConfig {
 
         public void setUrl(String url) {
             this.url = url;
+        }
+
+        public String getToolNamePrefix() {
+            return toolNamePrefix;
+        }
+
+        public void setToolNamePrefix(String toolNamePrefix) {
+            this.toolNamePrefix = toolNamePrefix;
         }
     }
 }

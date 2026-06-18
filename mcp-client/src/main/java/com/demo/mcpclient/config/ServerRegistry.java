@@ -30,8 +30,16 @@ public class ServerRegistry {
         if (initialized) return;
 
         for (ServerConfig.ServerInfo server : config.getServers()) {
+            connectWithRetry(server, 3);
+        }
+        initialized = true;
+        log.info("Server registry initialized. Connected to {} servers", connections.size());
+    }
+
+    private void connectWithRetry(ServerConfig.ServerInfo server, int maxRetries) {
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                log.info("Connecting to MCP server: {} at {}", server.getName(), server.getUrl());
+                log.info("Connecting to MCP server: {} at {} (attempt {}/{})", server.getName(), server.getUrl(), attempt, maxRetries);
 
                 Map<String, Object> initRequest = Map.of(
                         "jsonrpc", "2.0",
@@ -61,15 +69,26 @@ public class ServerRegistry {
                             "method", "notifications/initialized"
                     );
                     restTemplate.postForObject(server.getUrl() + "/mcp", initializedNotify, Map.class);
+                    return;
                 } else {
-                    log.error("Failed to connect to MCP server: {} - response: {}", server.getName(), response);
+                    log.warn("Failed to connect to MCP server: {} - response: {}", server.getName(), response);
                 }
             } catch (Exception e) {
-                log.error("Failed to connect to MCP server: {}", server.getName(), e);
+                log.warn("Failed to connect to MCP server: {} (attempt {}/{})", server.getName(), attempt, maxRetries, e);
+            }
+
+            if (attempt < maxRetries) {
+                long delay = (long) Math.pow(2, attempt) * 1000;
+                log.info("Retrying in {}ms...", delay);
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
         }
-        initialized = true;
-        log.info("Server registry initialized. Connected to {} servers", connections.size());
+        log.error("Failed to connect to MCP server: {} after {} attempts", server.getName(), maxRetries);
     }
 
     public List<Map<String, Object>> listTools() {
@@ -96,6 +115,12 @@ public class ServerRegistry {
                         for (Map<String, Object> tool : tools) {
                             Map<String, Object> enriched = new LinkedHashMap<>(tool);
                             enriched.put("serverName", serverName);
+                            String originalName = (String) tool.get("name");
+                            if (config.getServerInfo(serverName) != null 
+                                    && config.getServerInfo(serverName).getToolNamePrefix() != null) {
+                                enriched.put("name", config.getServerInfo(serverName).getToolNamePrefix() + originalName);
+                                enriched.put("originalName", originalName);
+                            }
                             allTools.add(enriched);
                         }
                     }
@@ -114,12 +139,19 @@ public class ServerRegistry {
             return Map.of("error", "Unknown server: " + serverName);
         }
 
+        String actualToolName = toolName;
+        ServerConfig.ServerInfo serverInfo = config.getServerInfo(serverName);
+        if (serverInfo != null && serverInfo.getToolNamePrefix() != null
+                && toolName.startsWith(serverInfo.getToolNamePrefix())) {
+            actualToolName = toolName.substring(serverInfo.getToolNamePrefix().length());
+        }
+
         try {
             Map<String, Object> request = Map.of(
                     "jsonrpc", "2.0",
                     "method", "tools/call",
                     "params", Map.of(
-                            "name", toolName,
+                            "name", actualToolName,
                             "arguments", arguments != null ? arguments : Map.of()
                     ),
                     "id", System.currentTimeMillis()
