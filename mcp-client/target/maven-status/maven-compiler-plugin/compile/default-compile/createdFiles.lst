@@ -1,7 +1,0 @@
-com/demo/mcpclient/config/ServerRegistry.class
-com/demo/mcpclient/McpClientApplication.class
-com/demo/mcpclient/config/ServerRegistry$ServerConnection.class
-com/demo/mcpclient/config/ServerConfig$ServerInfo.class
-com/demo/mcpclient/controller/McpClientController.class
-com/demo/mcpclient/config/ClientConfig.class
-com/demo/mcpclient/config/ServerConfig.class

@@ -1,6 +1,0 @@
-/workspace/mcp-host/src/main/java/com/demo/mcphost/McpHostApplication.java
-/workspace/mcp-host/src/main/java/com/demo/mcphost/controller/ChatController.java
-/workspace/mcp-host/src/main/java/com/demo/mcphost/model/ChatRequest.java
-/workspace/mcp-host/src/main/java/com/demo/mcphost/model/ChatResponse.java
-/workspace/mcp-host/src/main/java/com/demo/mcphost/service/McpClientService.java
-/workspace/mcp-host/src/main/java/com/demo/mcphost/service/OpenAiService.java
