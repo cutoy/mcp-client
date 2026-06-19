@@ -5,16 +5,21 @@
 ### mcp-server
 
 - [x] JSON-RPC 2.0 MCP 协议端点（`POST /mcp`）
-- [x] `initialize` 握手，返回协议版本和能力声明
+- [x] `initialize` 握手，返回协议版本和能力声明（tools/resources/prompts）
+- [x] `ping` 心跳响应
 - [x] `tools/list` 返回可用工具列表
 - [x] `tools/call` 支持按工具名分发调用
+- [x] `resources/list` 返回数据库资源
+- [x] `prompts/list` 返回提示模板
 - [x] `notifications/initialized` 通知处理
+- [x] JSON-RPC 批处理请求（batch）
+- [x] SSE/Streamable HTTP 传输（`GET /sse`）
 - [x] `get_schema` 工具 — 不传参返回所有表名，传入表名返回列详情
-- [x] `get_schema` 逗号分隔多表查询（如 `users,orders`）
+- [x] `get_schema` 逗号分隔多表查询
 - [x] `query_database` 工具 — 任意 SELECT 查询
 - [x] `query_database` SQL 校验 — 仅允许 SELECT
 - [x] `query_database` 危险 SQL 关键字/函数深度检查
-- [x] `query_database` 参数化查询（PreparedStatement，防止注入）
+- [x] `query_database` 参数化查询（PreparedStatement）
 - [x] `query_database` 查询超时（可配置 30s）
 - [x] `query_database` 结果行数上限（可配置 1000 行）
 - [x] 数据库连接完全可配置，从环境变量读取
@@ -54,19 +59,13 @@
 - [x] Dockerfile（多阶段构建，所有三个服务）
 - [x] Docker Compose（MySQL + 三个服务，健康检查）
 - [x] init.sql（示例数据库种子数据）
+- [x] GitHub Actions CI（编译 + 集成测试）
 - [x] 设计文档 + 实施计划
 - [x] README + 启动脚本
 
 ---
 
 ## 未实现
-
-### 协议完善
-
-- [ ] Server 端 SSE / Streamable HTTP 传输
-- [ ] Server `resources/list` 和 `prompts/list` 能力
-- [ ] MCP 心跳 / ping 机制
-- [ ] JSON-RPC 批处理请求（batch）
 
 ### 安全
 
@@ -83,5 +82,4 @@
 
 - [ ] 单元测试
 - [ ] 集成测试（全链路）
-- [ ] GitHub Actions CI
 - [ ] 版本号自动管理

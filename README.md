@@ -20,7 +20,7 @@
 
 ## 关键特性
 
-- **JSON-RPC 2.0 MCP 协议**：initialize 握手 / tools/list / tools/call / 通知
+- **JSON-RPC 2.0 MCP 协议**：initialize / ping / tools/list / tools/call / resources/list / prompts/list / 通知
 - **多 Server 管理**：支持同时连接多个 MCP Server，工具聚合
 - **多轮 function call**：大模型自主决策调用顺序，循环执行直到收敛
 - **流式输出**：`/chat/stream` 端点，SSE 格式实时推送响应
@@ -157,6 +157,26 @@ curl -X POST http://localhost:8081/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 
+# 心跳
+curl -X POST http://localhost:8081/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"ping","id":1}'
+
+# 资源列表
+curl -X POST http://localhost:8081/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"resources/list","id":2}'
+
+# 提示模板
+curl -X POST http://localhost:8081/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"prompts/list","id":3}'
+
+# 批处理请求
+curl -X POST http://localhost:8081/mcp \
+  -H 'Content-Type: application/json' \
+  -d '[{"jsonrpc":"2.0","method":"ping","id":1},{"jsonrpc":"2.0","method":"tools/list","id":2}]'
+
 # 调用 get_schema（所有表）
 curl -X POST http://localhost:8081/mcp \
   -H 'Content-Type: application/json' \
@@ -225,6 +245,42 @@ curl -N -X POST http://localhost:8080/chat/stream \
 | get_schema | table_name（可选，逗号分隔） | 不传参返回所有表名；传入表名返回列结构 |
 | query_database | sql（必填，仅 SELECT） + params（可选） | 执行只读查询，支持参数化查询防注入 |
 
+## JSON-RPC 方法
+
+| 方法 | 说明 |
+|------|------|
+| `initialize` | 握手，返回协议版本和能力声明 |
+| `ping` | 心跳检测 |
+| `tools/list` | 返回可用工具列表 |
+| `tools/call` | 按名称调用工具 |
+| `resources/list` | 返回可用资源 |
+| `prompts/list` | 返回提示模板 |
+| `notifications/initialized` | 客户端初始化完成通知 |
+
+## SSE 传输
+
+mcp-server 支持两种传输模式：
+
+**普通模式**（默认）：HTTP POST 请求-响应
+
+```bash
+curl -X POST http://localhost:8081/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"ping","id":1}'
+```
+
+**SSE 模式**：长连接 + 事件推送
+
+```bash
+# 建立 SSE 连接，获取 session 地址
+curl -N http://localhost:8081/sse
+# 返回: event:endpoint, data:/mcp?sessionId=xxx
+
+# 通过 SSE session 发送请求
+curl -X POST "http://localhost:8081/mcp?sessionId=xxx" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+# 响应通过 SSE 流返回
+```
+
 ### SQL 安全策略
 
 - 仅允许 `SELECT` 开头语句
@@ -238,6 +294,8 @@ curl -N -X POST http://localhost:8080/chat/stream \
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `POST /mcp` | JSON-RPC | mcp-server MCP 协议入口 |
+| `POST /mcp?sessionId=` | JSON-RPC | SSE 会话下通过查询参数路由 |
+| `GET /sse` | SSE | mcp-server SSE 传输（返回 endpoint 地址） |
 | `GET /tools` | REST | mcp-client 聚合工具列表 |
 | `POST /tools/call` | REST | mcp-client 转发工具调用 |
 | `POST /chat` | REST | mcp-host 普通对话 |
